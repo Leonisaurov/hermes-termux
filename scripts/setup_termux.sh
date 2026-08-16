@@ -57,6 +57,15 @@ export ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-$(getprop ro.build.version.sdk 2>
 export ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-24}"
 VENV_PYTHON="$REPO_ROOT/venv/bin/python"
 
+recreate_broken_venv() {
+    local backup
+    backup="$REPO_ROOT/venv.broken.$(date +%Y%m%d%H%M%S).$$"
+    warn "existing venv Python is not executable; preserving it at $backup"
+    mv "$REPO_ROOT/venv" "$backup"
+    info 'Creating a fresh Termux-compatible virtual environment'
+    "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
+}
+
 if [[ "$BUILD_STANDALONE" == true && "$SKIP_PYTHON" == true ]]; then
     die '--standalone requires the Hermes venv; remove --skip-python'
 fi
@@ -65,13 +74,20 @@ if [[ "$SKIP_PYTHON" != true ]]; then
     if [[ ! -x "$VENV_PYTHON" ]]; then
         info 'Creating the Termux-compatible virtual environment'
         "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
+    elif ! "$VENV_PYTHON" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
+        recreate_broken_venv
     else
         info 'Keeping existing venv'
     fi
     [[ -x "$VENV_PYTHON" ]] || die 'venv Python was not created'
     if ! "$VENV_PYTHON" -c 'import pip' >/dev/null 2>&1; then
         info 'Bootstrapping pip in the existing venv'
-        "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade
+        if ! "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade; then
+            recreate_broken_venv
+            [[ -x "$VENV_PYTHON" ]] || die 'fresh venv Python was not created'
+            "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade \
+                || die 'cannot bootstrap pip in the Termux venv'
+        fi
     fi
     if "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.platform == "android" else 1)' \
         >/dev/null 2>&1 && ! "$VENV_PYTHON" -c 'import psutil' >/dev/null 2>&1; then
