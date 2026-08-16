@@ -1,6 +1,20 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Reproducible, low-heat Termux setup for the current Hermes checkout.
-set -euo pipefail
+#
+# What it does:
+#  1. Installs Termux packages (python, clang, rust, etc.)
+#  2. Creates a venv with --system-site-packages
+#  3. Installs dependencies from pyproject.toml [termux] extra
+#  4. Uses Termux's native python-cryptography (not PyPI abi3 wheels)
+#  5. Compiles and installs the FTS5 CJK tokenizer extension into
+#     ~/.hermes/lib/libfts5_cjk.so (from native/fts5_cjk/)
+#  6. Optionally compiles a standalone Nuitka binary
+#
+# The CJK tokenizer is a native SQLite extension that speeds up session
+# search for Korean, Chinese, and Japanese text (2-char terms no longer
+# fall through to slow LIKE full-table scans). It is optional: set
+# HERMES_FTS5_CJK_SO="" or sessions.cjk_fts=false to disable.
+# See native/fts5_cjk/README.md for details.
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 info() { printf '==> %s\n' "$*"; }
@@ -40,7 +54,7 @@ done
 if [[ "$SKIP_PACKAGES" != true ]]; then
     command -v pkg >/dev/null 2>&1 || die 'Termux pkg command is unavailable'
     info 'Installing Termux runtime and build dependencies'
-    pkg install -y python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api patchelf binutils ldd
+    pkg install -y python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api patchelf binutils ldd ccache
 fi
 
 if [[ "$USE_TCR" == true ]]; then
@@ -162,11 +176,21 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
     STANDALONE_DIR="$STANDALONE_PARENT/hermes-termux.dist"
     mkdir -p "$STANDALONE_PARENT"
     info "Building standalone Hermes with Nuitka (output: $STANDALONE_DIR)"
+    # --strip: drops debug/symbol tables from the ELF (~287MB → ~200MB on
+    #   aarch64), the single biggest size win for the on-device tarball.
+    # --lto=yes: link-time optimization — smaller, faster binary; Nuitka
+    #   falls back gracefully on toolchains without LTO.
+    # --remove-output: deletes the intermediate .build/ tree after success,
+    #   halving the dist/ footprint on the phone.
     "${RUNNER[@]}" "$VENV_PYTHON" -m nuitka \
         --standalone \
         --follow-imports \
         --jobs="$BUILD_JOBS" \
         --low-memory \
+        --strip \
+        --lto=yes \
+        --remove-output \
+        --cache-dir="${NUITKA_CACHE_DIR:-$HOME/.cache/Nuitka}" \
         --output-dir="$STANDALONE_PARENT" \
         --output-filename=hermes-termux \
         --include-package=agent \
@@ -220,7 +244,11 @@ if [[ -x "$VENV_PYTHON" ]]; then
     info 'Checking Hermes Termux path policy'
     "$VENV_PYTHON" - <<'PY'
 import os
-from tools.termux_path_policy import command_policy_error, path_policy_error
+from tools.termux_path_policy import (
+    command_policy_error,
+    path_policy_error,
+    prefix_write_allowed,
+)
 assert command_policy_error("ls /sdcard")
 assert command_policy_error("printf x > $PREFIX/bin/blocked")
 assert path_policy_error("/sdcard/example", operation="read")
@@ -230,7 +258,22 @@ assert path_policy_error("/etc/passwd", operation="read")
 assert path_policy_error("/storage/emulated/0/foo.txt", operation="read")
 assert command_policy_error("cat /etc/passwd")
 assert command_policy_error("cat /data/data/com.android.settings/foo")
+# Reads inside $PREFIX are allowed (system introspection).
+assert not path_policy_error(os.path.join(os.environ["PREFIX"], "etc", "ntfy", "server.yml"), operation="read")
+assert not command_policy_error("ls $PREFIX/bin")
+assert not command_policy_error("cat $PREFIX/etc/ntfy/server.yml")
+# Writes inside $PREFIX are allowed ONLY under the termux-services roots.
+svc_root = os.path.join(os.environ["PREFIX"], "var", "service")
+assert prefix_write_allowed(os.path.join(svc_root, "hermes-gateway", "run"))
+assert not path_policy_error(os.path.join(svc_root, "hermes-gateway", "run"), operation="write")
+assert not command_policy_error("mkdir -p $PREFIX/var/service/hermes-gateway/log")
+assert path_policy_error(os.path.join(os.environ["PREFIX"], "etc", "somefile"), operation="write")
+assert command_policy_error("printf x > $PREFIX/var/lib/blocked")
+# Indirect $PREFIX derivation (the runtime-built-path bypass) is blocked.
+assert command_policy_error("P=$(dirname $(dirname $(command -v sh))); ls $P/bin")
+assert command_policy_error("D=$(dirname $(command -v ntfy)); touch $D/../var/lib/x")
 print("  ok: /sdcard and $PREFIX protections + strict Termux home allow-list")
+print("  ok: $PREFIX reads allowed, service-root writes allowed, indirect-derivation blocked")
 PY
     info 'Hermes version'
     "$VENV_PYTHON" -m hermes_cli.main version || true

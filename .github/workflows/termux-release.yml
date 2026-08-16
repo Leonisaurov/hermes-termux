@@ -53,18 +53,22 @@ jobs:
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
       - name: Restore Nuitka + pip build cache
-        # Nuitka keeps a per-module compile cache (~/.cache/Nuitka) and pip
-        # keeps built wheels (~/.cache/pip). Persisting both across runs
-        # turns a ~40 min cold compile into a ~5 min incremental one when
-        # only a few .py files changed (Nuitka recompiles only stale
-        # modules; its cache self-invalidates when the Nuitka/compiler
-        # version changes). Keyed on the dependency/setup manifests — a
-        # pure source change keeps the same key and hits restore-keys.
+        # Nuitka keeps a per-module compile cache (~/.cache/Nuitka, explicit
+        # --cache-dir) and ccache keeps object files; pip keeps built wheels
+        # (~/.cache/pip). Persisting all three across runs turns a ~40 min
+        # cold compile into a ~5 min incremental one when only a few .py
+        # files changed (Nuitka recompiles only stale modules; its cache
+        # self-invalidates when the Nuitka/compiler version changes).
+        #
+        # Key only on dependency manifests, NOT on scripts/*.sh or source
+        # .py files: a pure source change must hit the same key and restore
+        # the previous compile cache so Nuitka recompiles just the changed
+        # modules. Script changes (build flow) should not nuke the cache.
         id: cache-restore
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ runner.temp }}/hermes-termux-cache
-          key: hermes-termux-cache-${{ hashFiles('uv.lock', 'pyproject.toml', 'scripts/setup_termux.sh', 'scripts/build-termux-standalone-ci.sh') }}
+          key: hermes-termux-cache-${{ hashFiles('uv.lock', 'pyproject.toml') }}
           restore-keys: |
             hermes-termux-cache-
 
@@ -72,6 +76,7 @@ jobs:
         run: |
           mkdir -p "${{ runner.temp }}/hermes-termux-cache"/pip
           mkdir -p "${{ runner.temp }}/hermes-termux-cache"/nuitka
+          mkdir -p "${{ runner.temp }}/hermes-termux-cache"/ccache
           sudo chown -R 1000:1000 "${{ runner.temp }}/hermes-termux-cache"
 
       - name: Build inside Termux container (arm64)
@@ -81,6 +86,8 @@ jobs:
             -w /workspace \
             -v "${{ runner.temp }}/hermes-termux-cache/pip:/data/data/com.termux/files/home/.cache/pip" \
             -v "${{ runner.temp }}/hermes-termux-cache/nuitka:/data/data/com.termux/files/home/.cache/Nuitka" \
+            -v "${{ runner.temp }}/hermes-termux-cache/ccache:/data/data/com.termux/files/home/.cache/ccache" \
+            -e CCACHE_DIR=/data/data/com.termux/files/home/.cache/ccache \
             termux/termux-docker:latest \
             bash /workspace/scripts/build-termux-standalone-ci.sh
 
@@ -96,13 +103,13 @@ jobs:
           path: ${{ runner.temp }}/hermes-termux-cache
           # Suffix with run_id so every run writes a fresh entry; the next
           # run's restore-keys (prefix match) picks up the newest.
-          key: hermes-termux-cache-${{ hashFiles('uv.lock', 'pyproject.toml', 'scripts/setup_termux.sh', 'scripts/build-termux-standalone-ci.sh') }}-${{ github.run_id }}
+          key: hermes-termux-cache-${{ hashFiles('uv.lock', 'pyproject.toml') }}-${{ github.run_id }}
 
       - name: Upload standalone artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-termux-aarch64
-          path: dist/hermes-termux-*.tar.gz
+          path: dist/hermes-termux-*.tar.xz
           if-no-files-found: error
           retention-days: 14
 
@@ -124,6 +131,6 @@ jobs:
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('ci-{0}', github.run_id) }}
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Hermes Termux CI build {0}', github.run_id) }}
-          files: release-assets/hermes-termux-*.tar.gz
+          files: release-assets/hermes-termux-*.tar.xz
           generate_release_notes: startsWith(github.ref, 'refs/tags/v')
           fail_on_unmatched_files: true
