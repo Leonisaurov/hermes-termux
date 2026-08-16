@@ -60,25 +60,32 @@ VENV_PYTHON="$REPO_ROOT/venv/bin/python"
 recreate_broken_venv() {
     local backup
     backup="$REPO_ROOT/venv.broken.$(date +%Y%m%d%H%M%S).$$"
-    warn "existing venv Python is not executable; preserving it at $backup"
+    warn "preserving the existing venv at $backup"
     mv "$REPO_ROOT/venv" "$backup"
     info 'Creating a fresh Termux-compatible virtual environment'
     "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages --without-pip "$REPO_ROOT/venv"
 }
 
-bootstrap_venv_pip() {
-    # Some Termux Python packages ship ensurepip without its bundled pip
-    # wheel. Prefer ensurepip when complete, then use the system pip's
-    # cross-venv installer, which does not need ensurepip/_bundled.
-    if "$VENV_PYTHON" -c 'import pip' >/dev/null 2>&1; then
-        return 0
+use_termux_native_cryptography() {
+    # Termux's python-cryptography is built against Android's Python loader.
+    # A PyPI abi3 wheel can install successfully on arm64, but its Rust
+    # extension expects CPython symbols to be globally exported and then
+    # fails at import time with an unresolved PyLong_Type.  Because this venv
+    # uses --system-site-packages, remove only the venv copy and let Python
+    # resolve the ABI-matched Termux package instead.
+    local site_packages="$REPO_ROOT/venv/lib/python$("$VENV_PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')/site-packages"
+    if [[ -d "$site_packages/cryptography" ]]; then
+        rm -rf "$site_packages/cryptography" "$site_packages"/cryptography-*.dist-info
     fi
-    if "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade; then
-        return 0
-    fi
-    warn 'ensurepip is unavailable or missing its bundled wheel; using system pip'
-    "${RUNNER[@]}" "$PYTHON" -m pip --python "$VENV_PYTHON" install --upgrade pip \
-        || die 'cannot install pip into the Termux venv with system pip'
+    "$VENV_PYTHON" - <<'PY'
+import cryptography
+from cryptography.hazmat.primitives import hashes
+
+if "/venv/" in cryptography.__file__:
+    raise SystemExit(f"Termux cryptography is still shadowed: {cryptography.__file__}")
+print(f"Using Termux cryptography {cryptography.__version__}: {cryptography.__file__}")
+print(hashes.SHA256)
+PY
 }
 
 if [[ "$BUILD_STANDALONE" == true && "$SKIP_PYTHON" == true ]]; then
@@ -99,8 +106,8 @@ if [[ "$SKIP_PYTHON" != true ]]; then
         info 'Refreshing the venv to expose Termux system packages'
         recreate_broken_venv
         [[ -x "$VENV_PYTHON" ]] || die 'fresh venv Python was not created'
-        info 'Bootstrapping pip in the Termux venv'
-        bootstrap_venv_pip
+        "$VENV_PYTHON" -c 'import pip' >/dev/null 2>&1 \
+            || die 'Termux system pip is unavailable; reinstall the Termux python package'
     fi
     if "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.platform == "android" else 1)' \
         >/dev/null 2>&1 && ! "$VENV_PYTHON" -c 'import psutil' >/dev/null 2>&1; then
@@ -116,6 +123,7 @@ if [[ "$SKIP_PYTHON" != true ]]; then
     info 'Installing Hermes with the curated Termux dependency profile'
     "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
     "${RUNNER[@]}" "$VENV_PYTHON" -m pip install -e '.[termux]' -c "$REPO_ROOT/constraints-termux.txt"
+    use_termux_native_cryptography
 fi
 
 if [[ "$BUILD_STANDALONE" == true ]]; then
