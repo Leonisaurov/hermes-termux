@@ -52,24 +52,40 @@ jobs:
         # inside the checkout by the container, so hand it over first.
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      - name: Expand memory (zram → swap file fallback)
+      - name: Expand memory (zram + large swap file)
         # The Nuitka final link with LTO balloons in RAM and the runner's
-        # linker gets OOM-killed (~37 min in). Give the kernel more virtual
-        # memory: prefer zram (compressed RAM), fall back to a 8G swap
-        # file. Best-effort — if neither works the build still runs, just
-        # without LTO safety margin.
+        # linker gets OOM-killed ~37 min in (all 3590 objects linked in a
+        # single lld invocation). Give the kernel more virtual memory.
+        #
+        # Two facts rule the shape of this step:
+        #   * GitHub public arm64 runners ship WITHOUT a zram module
+        #     (modprobe fails), but WITH a small default swap (~3G) already
+        #     active. An "if no swap exists, create one" guard therefore
+        #     never fires and the build OOMs.
+        #   * The arm64 runner disk is small (~14G), so a fixed 8G/16G swap
+        #     file can fill the disk. Size the file to what actually fits,
+        #     capped at 16G, and ALWAYS create it on top of any existing
+        #     swap. Best-effort: if neither zram nor the file works, the
+        #     build still runs (just without LTO headroom).
         run: |
           if sudo modprobe zram 2>/dev/null; then
             echo "zram module available"
             echo 8G | sudo tee /sys/block/zram0/disksize >/dev/null
             sudo mkswap /dev/zram0 >/dev/null 2>&1 && sudo swapon /dev/zram0 && echo "zram swap enabled"
           fi
-          if ! swapon --show | grep -q .; then
-            echo "no swap active; creating 8G swap file"
-            sudo fallocate -l 8G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=none
+          # Always add a swap file on top of any existing swap. Size it to
+          # fit on disk with ~2G headroom for the build, capped at 16G.
+          avail_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+          size_mb=$(( (avail_kb - 2097152) / 1024 ))
+          [ "$size_mb" -gt 16384 ] && size_mb=16384
+          if [ "$size_mb" -gt 1024 ]; then
+            echo "creating ${size_mb}MB swap file"
+            sudo fallocate -l "${size_mb}M" /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count="$size_mb" status=none
             sudo chmod 600 /swapfile
             sudo mkswap /swapfile >/dev/null
-            sudo swapon /swapfile && echo "swap file enabled"
+            sudo swapon /swapfile && echo "swap file enabled (${size_mb}MB)"
+          else
+            echo "insufficient disk for a useful swap file (${size_mb}MB available); skipping"
           fi
           free -h
 
