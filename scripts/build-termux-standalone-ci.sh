@@ -43,9 +43,13 @@ info 'Refreshing the Termux package index'
 # build at ~20 min). packages.termux.dev is the primary mirror and is
 # Cloudflare-fronted; apt falls back to the other configured sources too.
 _MIRROR_CONF="$PREFIX/etc/apt/sources.list.d/termux-mirror.list"
-if [[ -w "$_MIRROR_CONF" || ! -e "$_MIRROR_CONF" ]]; then
-    echo "deb https://packages.termux.dev/apt/termux-main stable main" > "$_MIRROR_CONF" 2>/dev/null \
-        || warn 'could not write mirror config; using auto-selected mirror'
+if [[ -w "$PREFIX/etc/apt/sources.list.d" || ! -e "$_MIRROR_CONF" ]]; then
+    mkdir -p "$PREFIX/etc/apt/sources.list.d" 2>/dev/null || true
+    if echo "deb https://packages.termux.dev/apt/termux-main stable main" > "$_MIRROR_CONF" 2>/dev/null; then
+        info 'Pinned Termux mirror: packages.termux.dev'
+    else
+        echo 'warning: could not write mirror config; using auto-selected mirror' >&2
+    fi
 fi
 
 for attempt in 1 2 3; do
