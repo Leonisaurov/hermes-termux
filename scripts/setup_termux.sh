@@ -121,6 +121,14 @@ if [[ "$SKIP_PYTHON" != true ]]; then
         info 'Bootstrapping pip in the existing venv'
         bootstrap_venv_pip
     fi
+    # Upgrade pip/setuptools/wheel BEFORE the psutil prebuild below: the
+    # Android shim installs with `pip install --no-build-isolation`, which
+    # requires setuptools to be importable in the venv. On-device the Termux
+    # system site-packages usually provides it, but in a fresh CI container
+    # (termux/termux-docker) nothing does — without this reorder the build
+    # dies with "BackendUnavailable: Cannot import 'setuptools.build_meta'".
+    info 'Upgrading pip, setuptools and wheel'
+    "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
     if "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.platform == "android" else 1)' \
         >/dev/null 2>&1 && ! "$VENV_PYTHON" -c 'import psutil' >/dev/null 2>&1; then
         info 'Prebuilding the psutil Android compatibility shim'
@@ -133,7 +141,6 @@ if [[ "$SKIP_PYTHON" != true ]]; then
         "${PSUTIL_INSTALLER[@]}" --pip "$PSUTIL_PIP"
     fi
     info 'Installing Hermes with the curated Termux dependency profile'
-    "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
     "${RUNNER[@]}" "$VENV_PYTHON" -m pip install -e '.[termux]' -c "$REPO_ROOT/constraints-termux.txt"
     use_termux_native_cryptography
 fi
