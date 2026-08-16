@@ -112,7 +112,15 @@ dependencies = [
   # .gitignore-aware file matching for desktop build stamp.
   "pathspec==1.1.1",
   "fastapi>=0.104.0,<1",
-  "uvicorn[standard]>=0.24.0,<1",
+  # uvicorn[standard] pulls uvloop, which has no Android wheels and whose
+  # sdist cannot build on Termux (its vendored libuv ships without ./configure
+  # → "error: [Errno 2] No such file or directory: './configure'"). asyncio's
+  # native loop is fine on Android, so install uvicorn WITHOUT the standard
+  # extra there. All other standard components (httptools, watchfiles,
+  # websockets, python-dotenv, pyyaml) are either already core deps or build
+  # fine from source on Termux.
+  "uvicorn[standard]>=0.24.0,<1; sys_platform != 'android'",
+  "uvicorn>=0.24.0,<1; sys_platform == 'android'",
   # Streaming multipart uploads for the dashboard file manager (NS-501).
   # FastAPI's UploadFile/Form depend on python-multipart; it is NOT pulled in
   # by fastapi itself, so the dashboard's multipart upload endpoint would 500
