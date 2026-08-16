@@ -54,7 +54,10 @@ done
 if [[ "$SKIP_PACKAGES" != true ]]; then
     command -v pkg >/dev/null 2>&1 || die 'Termux pkg command is unavailable'
     info 'Installing Termux runtime and build dependencies'
-    pkg install -y python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api patchelf binutils ldd ccache
+    # --fix-missing: if one mirror fails to serve a package, apt retries
+    # from the remaining configured sources instead of aborting the whole
+    # install (CI builds have hit slow mirrors timing out mid-download).
+    pkg install -y --fix-missing python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api patchelf binutils ldd ccache
 fi
 
 if [[ "$USE_TCR" == true ]]; then

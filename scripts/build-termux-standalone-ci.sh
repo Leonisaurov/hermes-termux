@@ -36,6 +36,18 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 # time), so `pkg install` fails without a refresh. Retry: a network blip in
 # CI must not kill the whole build.
 info 'Refreshing the Termux package index'
+
+# Pin the OFFICIAL Termux mirror. The container's mirror auto-selection
+# sometimes picks a slow/unstable mirror (observed: termux.niranjan.co
+# timing out on the 125 MB rust package after 3 attempts, killing the
+# build at ~20 min). packages.termux.dev is the primary mirror and is
+# Cloudflare-fronted; apt falls back to the other configured sources too.
+_MIRROR_CONF="$PREFIX/etc/apt/sources.list.d/termux-mirror.list"
+if [[ -w "$_MIRROR_CONF" || ! -e "$_MIRROR_CONF" ]]; then
+    echo "deb https://packages.termux.dev/apt/termux-main stable main" > "$_MIRROR_CONF" 2>/dev/null \
+        || warn 'could not write mirror config; using auto-selected mirror'
+fi
+
 for attempt in 1 2 3; do
     if pkg update; then
         break
