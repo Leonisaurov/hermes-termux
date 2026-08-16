@@ -66,6 +66,18 @@ recreate_broken_venv() {
     "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
 }
 
+bootstrap_venv_pip() {
+    # Some Termux Python packages ship ensurepip without its bundled pip
+    # wheel. Prefer ensurepip when complete, then use the system pip's
+    # cross-venv installer, which does not need ensurepip/_bundled.
+    if "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade; then
+        return 0
+    fi
+    warn 'ensurepip is unavailable or missing its bundled wheel; using system pip'
+    "${RUNNER[@]}" "$PYTHON" -m pip --python "$VENV_PYTHON" install --upgrade pip \
+        || die 'cannot install pip into the Termux venv with system pip'
+}
+
 if [[ "$BUILD_STANDALONE" == true && "$SKIP_PYTHON" == true ]]; then
     die '--standalone requires the Hermes venv; remove --skip-python'
 fi
@@ -82,12 +94,7 @@ if [[ "$SKIP_PYTHON" != true ]]; then
     [[ -x "$VENV_PYTHON" ]] || die 'venv Python was not created'
     if ! "$VENV_PYTHON" -c 'import pip' >/dev/null 2>&1; then
         info 'Bootstrapping pip in the existing venv'
-        if ! "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade; then
-            recreate_broken_venv
-            [[ -x "$VENV_PYTHON" ]] || die 'fresh venv Python was not created'
-            "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade \
-                || die 'cannot bootstrap pip in the Termux venv'
-        fi
+        bootstrap_venv_pip
     fi
     if "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.platform == "android" else 1)' \
         >/dev/null 2>&1 && ! "$VENV_PYTHON" -c 'import psutil' >/dev/null 2>&1; then
