@@ -63,7 +63,7 @@ recreate_broken_venv() {
     warn "existing venv Python is not executable; preserving it at $backup"
     mv "$REPO_ROOT/venv" "$backup"
     info 'Creating a fresh Termux-compatible virtual environment'
-    "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
+    "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages --without-pip "$REPO_ROOT/venv"
 }
 
 bootstrap_venv_pip() {
@@ -85,7 +85,7 @@ fi
 if [[ "$SKIP_PYTHON" != true ]]; then
     if [[ ! -x "$VENV_PYTHON" ]]; then
         info 'Creating the Termux-compatible virtual environment'
-        "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
+        "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages --without-pip "$REPO_ROOT/venv"
     elif ! "$VENV_PYTHON" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
         recreate_broken_venv
     else
