@@ -53,9 +53,12 @@ jobs:
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
       - name: Expand memory (zram + large swap file)
-        # The Nuitka final link with LTO balloons in RAM and the runner's
-        # linker gets OOM-killed ~37 min in (all 3590 objects linked in a
-        # single lld invocation). Give the kernel more virtual memory.
+        # The Nuitka final link (all 3590 objects in a single lld invocation)
+        # is memory-hungry; extra swap gives the linker headroom and prevents
+        # spurious OOM kills on a busy runner. (LTO now uses ThinLTO via
+        # --experimental=thin-lto — see setup_termux.sh — because full LTO
+        # OOM-killed lld even with 16G extra swap. The swap here is still a
+        # cheap safety net for the ThinLTO link.)
         #
         # Two facts rule the shape of this step:
         #   * GitHub public arm64 runners ship WITHOUT a zram module
@@ -66,7 +69,7 @@ jobs:
         #     file can fill the disk. Size the file to what actually fits,
         #     capped at 16G, and ALWAYS create it on top of any existing
         #     swap. Best-effort: if neither zram nor the file works, the
-        #     build still runs (just without LTO headroom).
+        #     build still runs (just with less memory headroom).
         run: |
           if sudo modprobe zram 2>/dev/null; then
             echo "zram module available"

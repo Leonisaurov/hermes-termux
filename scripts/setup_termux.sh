@@ -179,9 +179,15 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
     STANDALONE_DIR="$STANDALONE_PARENT/hermes-termux.dist"
     mkdir -p "$STANDALONE_PARENT"
     info "Building standalone Hermes with Nuitka (output: $STANDALONE_DIR)"
-    # --lto=yes: link-time optimization — smaller, faster binary. The
-    #   workflow enables zram/swap before building so the final link's RAM
-    #   spike doesn't OOM-kill the linker.
+    # --lto=yes + --experimental=thin-lto: link-time optimization via
+    #   ThinLTO instead of full LTO. Full LTO (-flto) loads the IR of all
+    #   ~3590 modules into lld at once and OOM-kills the linker even with
+    #   16G extra swap + 15G RAM (~83 min of thrashing before the kill).
+    #   ThinLTO (-flto=thin) is how termux-packages builds LTO packages on
+    #   arm64: it reads per-module summaries and optimizes in parallel, so
+    #   peak memory drops massively while keeping most of LTO's size/speed
+    #   win. Nuitka 4.1.3 maps --lto=yes + the thin-lto experimental flag
+    #   to -flto=thin for both compile and link.
     # --remove-output: deletes the intermediate .build/ tree after success,
     #   halving the dist/ footprint on the phone.
     # NOTE: no --strip / --cache-dir (Nuitka 4.x removed both flags).
@@ -193,6 +199,7 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
         --jobs="$BUILD_JOBS" \
         --low-memory \
         --lto=yes \
+        --experimental=thin-lto \
         --remove-output \
         --output-dir="$STANDALONE_PARENT" \
         --output-filename=hermes-termux \
