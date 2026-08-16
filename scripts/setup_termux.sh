@@ -179,19 +179,20 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
     STANDALONE_DIR="$STANDALONE_PARENT/hermes-termux.dist"
     mkdir -p "$STANDALONE_PARENT"
     info "Building standalone Hermes with Nuitka (output: $STANDALONE_DIR)"
+    # --lto=yes: link-time optimization — smaller, faster binary. The
+    #   workflow enables zram/swap before building so the final link's RAM
+    #   spike doesn't OOM-kill the linker.
     # --remove-output: deletes the intermediate .build/ tree after success,
     #   halving the dist/ footprint on the phone.
-    # NOTE: no --strip / --cache-dir (Nuitka 4.x removed both flags) and no
-    # --lto: LTO makes the final link balloon in RAM and the arm64 runner's
-    # linker gets OOM-killed ("clang: error: unable to execute command:
-    # Killed") near the end of the build. Caching is default at
-    # ~/.cache/Nuitka (honors XDG_CACHE_HOME) with ccache for C objects;
-    # stripping is default in standalone builds.
+    # NOTE: no --strip / --cache-dir (Nuitka 4.x removed both flags).
+    #   Caching is default at ~/.cache/Nuitka (honors XDG_CACHE_HOME) with
+    #   ccache for C objects; stripping is default in standalone builds.
     "${RUNNER[@]}" "$VENV_PYTHON" -m nuitka \
         --standalone \
         --follow-imports \
         --jobs="$BUILD_JOBS" \
         --low-memory \
+        --lto=yes \
         --remove-output \
         --output-dir="$STANDALONE_PARENT" \
         --output-filename=hermes-termux \

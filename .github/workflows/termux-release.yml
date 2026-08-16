@@ -52,6 +52,27 @@ jobs:
         # inside the checkout by the container, so hand it over first.
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
+      - name: Expand memory (zram → swap file fallback)
+        # The Nuitka final link with LTO balloons in RAM and the runner's
+        # linker gets OOM-killed (~37 min in). Give the kernel more virtual
+        # memory: prefer zram (compressed RAM), fall back to a 8G swap
+        # file. Best-effort — if neither works the build still runs, just
+        # without LTO safety margin.
+        run: |
+          if sudo modprobe zram 2>/dev/null; then
+            echo "zram module available"
+            echo 8G | sudo tee /sys/block/zram0/disksize >/dev/null
+            sudo mkswap /dev/zram0 >/dev/null 2>&1 && sudo swapon /dev/zram0 && echo "zram swap enabled"
+          fi
+          if ! swapon --show | grep -q .; then
+            echo "no swap active; creating 8G swap file"
+            sudo fallocate -l 8G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=none
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile >/dev/null
+            sudo swapon /swapfile && echo "swap file enabled"
+          fi
+          free -h
+
       - name: Restore Nuitka + pip build cache
         # Nuitka keeps a per-module compile cache (~/.cache/Nuitka, explicit
         # --cache-dir) and ccache keeps object files; pip keeps built wheels
