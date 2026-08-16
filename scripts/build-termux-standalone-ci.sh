@@ -93,6 +93,22 @@ else
     exit 1
 fi
 
+# TLS + DNS smoke: the standalone binary must be able to resolve hostnames
+# and complete a TLS handshake. Nuitka-compiled binaries on Termux have
+# shipped with a broken resolver (socket.getaddrinfo fails with EAI_NODATA
+# "No address associated with hostname" for every host while the venv
+# works) — the tarball would publish a binary whose model chats all fail
+# with APIConnectionError. The binary's own smoke hook (HERMES_SMOKE_OPENAI_IMPORT
+# + HERMES_SMOKE_TLS_HOST) does the handshake inside the compiled runtime,
+# so this is the authoritative check.
+if HERMES_SMOKE_OPENAI_IMPORT=1 HERMES_SMOKE_TLS_HOST="${HERMES_SMOKE_TLS_HOST:-inference-api.nousresearch.com}" \
+    "$BIN" 2>&1 | grep -q "TLS handshake OK"; then
+    info 'Smoke test passed: DNS + TLS handshake works inside the standalone binary'
+else
+    echo 'error: DNS/TLS is broken inside the standalone binary (getaddrinfo/resolver)' >&2
+    exit 1
+fi
+
 ARCH="$(uname -m)"
 OUT="$REPO_ROOT/dist/hermes-termux-${ARCH}.tar.gz"
 info "Packaging $OUT"

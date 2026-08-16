@@ -916,6 +916,27 @@ if os.environ.get("HERMES_SMOKE_OPENAI_IMPORT") == "1":
     import importlib  # noqa: PLC0415
 
     importlib.import_module("openai._base_client")
+
+    # Also verify a real TLS handshake works (certifi bundle resolvable and
+    # valid). Under Nuitka standalone, certifi's cacert.pem is bundled next
+    # to the compiled module, but if the bundle path resolves wrong every
+    # provider call fails with an opaque APIConnectionError. Doing a live
+    # handshake here catches that class of bug before the tarball is
+    # published. Uses only stdlib ssl/socket.
+    import socket  # noqa: PLC0415
+    import ssl  # noqa: PLC0415
+
+    _host = os.environ.get("HERMES_SMOKE_TLS_HOST", "inference-api.nousresearch.com")
+    try:
+        import certifi  # noqa: PLC0415
+
+        _ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        _ctx = ssl.create_default_context()
+    with socket.create_connection((_host, 443), timeout=15) as _sock:
+        with _ctx.wrap_socket(_sock, server_hostname=_host) as _tls:
+            _peer = _tls.getpeercert()
+    print(f"smoke: TLS handshake OK with {_host} ({_tls.version()})")
     print("smoke: openai._base_client import OK (loader proxy works)")
     raise SystemExit(0)
 
