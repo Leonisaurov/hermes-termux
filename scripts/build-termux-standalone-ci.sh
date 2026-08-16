@@ -40,6 +40,26 @@ for attempt in 1 2 3; do
     sleep 10
 done
 
+# CRITICAL: upgrade all packages before building. termux-docker's bootstrap
+# is frozen at image build time, so its python/libpython + extension modules
+# (_socket.so, etc.) are OLDER than what a current device has installed. A
+# Nuitka standalone built against that stale python bundles the stale
+# _socket.so, and its getaddrinfo/resolver behaves incompatibly with the
+# device's bionic resolver — every provider call then fails with
+# APIConnectionError: [Errno 7] No address associated with hostname (DNS
+# broken ONLY in the binary; the venv and curl resolve fine). `pkg upgrade`
+# brings the container's python + toolchain to the same versions a current
+# device would have, so the bundled extensions match the device ABI.
+info 'Upgrading all Termux packages (sync python/toolchain with device repos)'
+for attempt in 1 2 3; do
+    if pkg upgrade -y; then
+        break
+    fi
+    [[ "$attempt" == 3 ]] && die 'pkg upgrade failed after 3 attempts'
+    echo "pkg upgrade failed (attempt $attempt); retrying in 10s"
+    sleep 10
+done
+
 # --no-tcr: the tcr thermal-throttling wrapper only exists on-device.
 # --standalone: produces dist/hermes-termux/hermes-termux.dist/hermes-termux.
 info 'Running Termux setup with standalone Nuitka build'
