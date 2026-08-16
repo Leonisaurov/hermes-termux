@@ -60,10 +60,21 @@ VENV_PYTHON="$REPO_ROOT/venv/bin/python"
 recreate_broken_venv() {
     local backup
     backup="$REPO_ROOT/venv.broken.$(date +%Y%m%d%H%M%S).$$"
-    warn "preserving the existing venv at $backup"
+    warn "existing venv Python is not executable; preserving it at $backup"
     mv "$REPO_ROOT/venv" "$backup"
     info 'Creating a fresh Termux-compatible virtual environment'
-    "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages --without-pip "$REPO_ROOT/venv"
+    "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
+}
+
+bootstrap_venv_pip() {
+    # The Termux Python package normally supplies the ensurepip wheel. If a
+    # device has a damaged Python package, use the system pip as fallback.
+    if "${RUNNER[@]}" "$VENV_PYTHON" -m ensurepip --upgrade; then
+        return 0
+    fi
+    warn 'ensurepip is unavailable or missing its bundled wheel; using system pip'
+    "${RUNNER[@]}" "$PYTHON" -m pip --python "$VENV_PYTHON" install --upgrade pip \
+        || die 'cannot install pip into the Termux venv with system pip'
 }
 
 use_termux_native_cryptography() {
@@ -95,7 +106,7 @@ fi
 if [[ "$SKIP_PYTHON" != true ]]; then
     if [[ ! -x "$VENV_PYTHON" ]]; then
         info 'Creating the Termux-compatible virtual environment'
-        "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages --without-pip "$REPO_ROOT/venv"
+        "${RUNNER[@]}" "$PYTHON" -m venv --system-site-packages "$REPO_ROOT/venv"
     elif ! "$VENV_PYTHON" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
         recreate_broken_venv
     else
@@ -103,11 +114,8 @@ if [[ "$SKIP_PYTHON" != true ]]; then
     fi
     [[ -x "$VENV_PYTHON" ]] || die 'venv Python was not created'
     if ! "$VENV_PYTHON" -c 'import pip' >/dev/null 2>&1; then
-        info 'Refreshing the venv to expose Termux system packages'
-        recreate_broken_venv
-        [[ -x "$VENV_PYTHON" ]] || die 'fresh venv Python was not created'
-        "$VENV_PYTHON" -c 'import pip' >/dev/null 2>&1 \
-            || die 'Termux system pip is unavailable; reinstall the Termux python package'
+        info 'Bootstrapping pip in the existing venv'
+        bootstrap_venv_pip
     fi
     if "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.platform == "android" else 1)' \
         >/dev/null 2>&1 && ! "$VENV_PYTHON" -c 'import psutil' >/dev/null 2>&1; then
@@ -121,10 +129,7 @@ if [[ "$SKIP_PYTHON" != true ]]; then
         "${PSUTIL_INSTALLER[@]}" --pip "$PSUTIL_PIP"
     fi
     info 'Installing Hermes with the curated Termux dependency profile'
-    # Do not upgrade the pip package itself: Termux owns the system pip and
-    # explicitly forbids replacing it. The venv can still use that pip to
-    # install project dependencies into its writable site-packages.
-    "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade setuptools wheel
+    "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
     "${RUNNER[@]}" "$VENV_PYTHON" -m pip install -e '.[termux]' -c "$REPO_ROOT/constraints-termux.txt"
     use_termux_native_cryptography
 fi
