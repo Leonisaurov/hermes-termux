@@ -40,6 +40,12 @@ from typing import Any
 
 _CACHE: dict[str, tuple[str, ...]] = {}
 _CACHE_LOCK = threading.Lock()
+# Serializes actual DNS queries: when 20 doctor/provider threads hit the
+# broken resolver at once, every thread would fire its own UDP query and
+# responses get lost/dropped under the burst (strace showed sendto without
+# recvfrom under load). One query at a time, cached, so the first thread
+# resolves and the rest hit the cache.
+_RESOLVE_LOCK = threading.Lock()
 _ORIG_GETADDRINFO = socket.getaddrinfo
 
 # EAI_* values seen from the broken resolver (Android/bionic: positive).
@@ -186,12 +192,20 @@ def _fallback_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
             cached = _CACHE.get(host)
         if cached:
             return _build_results(cached, port, family, type, proto)
-        ipv4, ipv6 = _resolve_via_dns(host)
-        if not ipv4 and not ipv6:
-            raise
-        with _CACHE_LOCK:
-            _CACHE[host] = tuple(ipv4 + ipv6)
-        return _build_results(tuple(ipv4 + ipv6), port, family, type, proto)
+        # Double-checked locking under _RESOLVE_LOCK: only one thread does
+        # the actual DNS queries; concurrent callers wait and then hit the
+        # cache. Prevents the UDP burst that loses responses.
+        with _RESOLVE_LOCK:
+            with _CACHE_LOCK:
+                cached = _CACHE.get(host)
+            if cached:
+                return _build_results(cached, port, family, type, proto)
+            ipv4, ipv6 = _resolve_via_dns(host)
+            if not ipv4 and not ipv6:
+                raise
+            with _CACHE_LOCK:
+                _CACHE[host] = tuple(ipv4 + ipv6)
+            return _build_results(tuple(ipv4 + ipv6), port, family, type, proto)
 
 
 def _build_results(addrs: tuple[str, ...], port, family, type, proto):
