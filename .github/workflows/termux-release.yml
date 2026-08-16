@@ -1,0 +1,94 @@
+name: Termux standalone release
+
+# Builds the Hermes Agent standalone binary (Nuitka) for Android/Termux
+# inside a real Termux container, on a native arm64 runner — the same
+# architecture as the target device. On tag pushes (v*) the tarball is
+# published as a GitHub Release; manual runs only upload an artifact.
+#
+# Why this shape:
+#   * termux/termux-docker:latest is a multi-arch Termux rootfs (bionic
+#     libc + Termux package manager). On ubuntu-24.04-arm Docker pulls the
+#     arm64 variant natively — no QEMU, no proot, `pkg` works as on-device.
+#   * scripts/build-termux-standalone-ci.sh drives the exact same setup
+#     script used on-device (scripts/setup_termux.sh --standalone), so a
+#     green CI build is the same artifact a phone would produce.
+#   * The container's default user is `system` (uid 1000); the checkout is
+#     chowned to it so the venv + dist/ can be written from inside.
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a GitHub Release with the standalone binary (tag = ci-<run-id>)
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create the GitHub Release for tag pushes
+
+concurrency:
+  group: termux-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Hermes standalone (aarch64)
+    # Public arm64 runner — native architecture, no emulation. If this
+    # label is unavailable on the account, replace with ubuntu-latest +
+    # QEMU (docker run --platform linux/arm64) at the cost of speed.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Make checkout writable by container user
+        # termux-docker runs as uid 1000 (Android `system`); the checkout
+        # is owned by the runner (uid 1001). The venv and dist/ are created
+        # inside the checkout by the container, so hand it over first.
+        run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
+
+      - name: Build inside Termux container (arm64)
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            termux/termux-docker:latest \
+            bash /workspace/scripts/build-termux-standalone-ci.sh
+
+      - name: Restore checkout ownership
+        run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-termux-aarch64
+          path: dist/hermes-termux-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download standalone artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hermes-termux-aarch64
+          path: release-assets
+
+      - name: Create release
+        uses: softprops/action-gh-release@d1e66170d32c9ec7bbcb7fae044d3d686ce304d3 # v3.0.2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('ci-{0}', github.run_id) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Hermes Termux CI build {0}', github.run_id) }}
+          files: release-assets/hermes-termux-*.tar.gz
+          generate_release_notes: startsWith(github.ref, 'refs/tags/v')
+          fail_on_unmatched_files: true
