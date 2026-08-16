@@ -27,6 +27,11 @@ info() { printf '==> %s\n' "$*"; }
 
 cd "$REPO_ROOT"
 
+# Nuitka's caches honor XDG_CACHE_HOME; the workflow mounts a persistent
+# cache dir at $HOME/.cache. Pin it explicitly so the compiled-module and
+# ccache data land in the mounted volume regardless of HOME quirks.
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+
 # The termux-docker image ships with an empty apt cache (cleaned at build
 # time), so `pkg install` fails without a refresh. Retry: a network blip in
 # CI must not kill the whole build.
@@ -146,10 +151,13 @@ else
 fi
 
 ARCH="$(uname -m)"
-OUT="$REPO_ROOT/dist/hermes-termux-${ARCH}.tar.gz"
+# xz compresses the Nuitka tree ~30-40% better than gzip (worth it: the
+# tarball is the download users install on-device). tar -J is available in
+# Termux coreutils; the release workflow just renames the artifact.
+OUT="$REPO_ROOT/dist/hermes-termux-${ARCH}.tar.xz"
 info "Packaging $OUT"
 mkdir -p "$REPO_ROOT/dist"
-tar -czf "$OUT" -C "$REPO_ROOT/dist/hermes-termux" hermes-termux.dist
+tar -cJf "$OUT" -C "$REPO_ROOT/dist/hermes-termux" hermes-termux.dist
 ls -lh "$OUT"
 
 info "Standalone build complete: $BIN"

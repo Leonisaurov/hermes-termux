@@ -180,8 +180,10 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
     #   falls back gracefully on toolchains without LTO.
     # --remove-output: deletes the intermediate .build/ tree after success,
     #   halving the dist/ footprint on the phone.
-    # NOTE: no --strip. Nuitka 4.x's CLI rejects it ("no such option:
-    # --strip"); stripping is on by default in standalone builds.
+    # NOTE: no --strip / --cache-dir. Nuitka 4.x removed both flags
+    # ("no such option: --strip" / "--cache-dir"). Caching is on by default
+    # at ~/.cache/Nuitka (honors XDG_CACHE_HOME) and uses ccache for the C
+    # compile step; stripping is default in standalone builds.
     "${RUNNER[@]}" "$VENV_PYTHON" -m nuitka \
         --standalone \
         --follow-imports \
@@ -189,7 +191,6 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
         --low-memory \
         --lto=yes \
         --remove-output \
-        --cache-dir="${NUITKA_CACHE_DIR:-$HOME/.cache/Nuitka}" \
         --output-dir="$STANDALONE_PARENT" \
         --output-filename=hermes-termux \
         --include-package=agent \
