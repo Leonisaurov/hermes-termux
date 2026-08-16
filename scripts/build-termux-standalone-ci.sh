@@ -50,13 +50,19 @@ done
 # broken ONLY in the binary; the venv and curl resolve fine). `pkg upgrade`
 # brings the container's python + toolchain to the same versions a current
 # device would have, so the bundled extensions match the device ABI.
+#
+# Not fatal on failure: mirrors 404 on individual packages sometimes (e.g.
+# ftp.agdsn.de missing command-not-found 3.5.0-7), and a failed upgrade
+# leaves python untouched. The DNS+TLS smoke hook later in this script is
+# the authoritative check — it fails the build if the resolver is still
+# broken, so we never publish a binary that can't reach providers.
 info 'Upgrading all Termux packages (sync python/toolchain with device repos)'
 for attempt in 1 2 3; do
     if pkg upgrade -y; then
         break
     fi
-    [[ "$attempt" == 3 ]] && die 'pkg upgrade failed after 3 attempts'
-    echo "pkg upgrade failed (attempt $attempt); retrying in 10s"
+    echo "warning: pkg upgrade failed (attempt $attempt); continuing — DNS+TLS smoke will catch a stale python"
+    [[ "$attempt" == 3 ]] && break
     sleep 10
 done
 
@@ -120,12 +126,22 @@ fi
 # works) — the tarball would publish a binary whose model chats all fail
 # with APIConnectionError. The binary's own smoke hook (HERMES_SMOKE_OPENAI_IMPORT
 # + HERMES_SMOKE_TLS_HOST) does the handshake inside the compiled runtime,
-# so this is the authoritative check.
+# so this is the authoritative check. It also verifies the in-code DNS
+# fallback (tools/termux_dns_fallback.py) resolves to a literal IP when the
+# native resolver is broken.
 if HERMES_SMOKE_OPENAI_IMPORT=1 HERMES_SMOKE_TLS_HOST="${HERMES_SMOKE_TLS_HOST:-inference-api.nousresearch.com}" \
     "$BIN" 2>&1 | grep -q "TLS handshake OK"; then
     info 'Smoke test passed: DNS + TLS handshake works inside the standalone binary'
 else
     echo 'error: DNS/TLS is broken inside the standalone binary (getaddrinfo/resolver)' >&2
+    exit 1
+fi
+
+if HERMES_SMOKE_OPENAI_IMPORT=1 HERMES_SMOKE_TLS_HOST="${HERMES_SMOKE_TLS_HOST:-inference-api.nousresearch.com}" \
+    "$BIN" 2>&1 | grep -qE "dns fallback resolves .* \(ip=True\)"; then
+    info 'Smoke test passed: Termux DNS fallback resolves to a literal IP'
+else
+    echo 'error: Termux DNS fallback is broken inside the standalone binary' >&2
     exit 1
 fi
 

@@ -906,6 +906,22 @@ try:
 except Exception:
     pass
 
+# Termux/Nuitka standalone DNS fallback. A standalone binary compiled in a
+# Termux container does not use Android's netd resolver: bionic's
+# getaddrinfo falls back to a local resolver with an EMPTY nameserver list
+# (strace: connect to 0.0.0.0:53), so every provider call fails with
+# APIConnectionError / [Errno 7] No address associated with hostname while
+# the venv and curl resolve fine. Install a getaddrinfo wrapper that falls
+# back to Termux's resolv.conf nameservers (minimal UDP DNS query) only when
+# the native resolver fails with EAI_NODATA/NONAME/AGAIN. No-op on healthy
+# devices and non-Termux platforms.
+try:
+    from tools.termux_dns_fallback import install_dns_fallback
+
+    install_dns_fallback()
+except Exception:
+    pass  # best-effort: native resolver remains the default
+
 # CI smoke-test hook: force the exact import path the OpenAI client takes
 # (openai._base_client → the finder above → the loader proxy). Under Nuitka
 # standalone, a broken finder crashes here with "cannot set 'exec_module'
@@ -917,16 +933,68 @@ if os.environ.get("HERMES_SMOKE_OPENAI_IMPORT") == "1":
 
     importlib.import_module("openai._base_client")
 
+    # Diagnostics: print the DNS-relevant environment and try a raw
+    # getaddrinfo so the CI log shows exactly what the compiled runtime
+    # sees (bionic decides netd-vs-local DNS from these).
+    import socket  # noqa: PLC0415
+
+    _dns_env = {
+        k: os.environ.get(k)
+        for k in ("ANDROID_DNS_MODE", "RES_OPTIONS", "LOCALDOMAIN",
+                  "ANDROID_DATA", "ANDROID_ROOT", "PREFIX", "TERMUX_VERSION")
+    }
+    print(f"smoke: dns env = {_dns_env}")
+    _host = os.environ.get("HERMES_SMOKE_TLS_HOST", "inference-api.nousresearch.com")
+    for _h in (_host, "localhost"):
+        try:
+            _r = socket.getaddrinfo(_h, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            print(f"smoke: getaddrinfo({_h}) = {_r[0][4]}")
+        except Exception as _e:
+            print(f"smoke: getaddrinfo({_h}) FAIL: {_e}")
+
+    # Verify the Termux DNS fallback works even when the native resolver is
+    # broken (the Nuitka-standalone failure mode: getaddrinfo → 0.0.0.0:53 →
+    # EAI_NODATA). Monkeypatch the native resolver to always raise, then
+    # confirm the fallback resolves the TLS host to a literal IP.
+    try:
+        from tools.termux_dns_fallback import install_dns_fallback
+
+        install_dns_fallback()
+        _orig_native = socket.getaddrinfo
+        import tools.termux_dns_fallback as _tdf
+
+        def _broken_resolver(host, port, family=0, type=0, proto=0, flags=0):
+            if isinstance(host, str) and host and not host.replace(".", "").isdigit():
+                raise socket.gaierror(
+                    getattr(socket, "EAI_NODATA", 7),
+                    "No address associated with hostname",
+                )
+            return _orig_native(host, port, family, type, proto, flags)
+
+        _saved = _tdf._ORIG_GETADDRINFO
+        _tdf._ORIG_GETADDRINFO = _broken_resolver
+        try:
+            _fb = socket.getaddrinfo(_host, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            _ip = _fb[0][4][0]
+            _is_ip = _ip.replace(".", "").isdigit()
+            print(f"smoke: dns fallback resolves {_host} -> {_ip} (ip={_is_ip})")
+            if not _is_ip:
+                raise SystemExit("dns fallback did not return a literal IP")
+        finally:
+            _tdf._ORIG_GETADDRINFO = _saved
+    except SystemExit:
+        raise
+    except Exception as _e:
+        print(f"smoke: dns fallback check skipped/failed: {_e}")
+
     # Also verify a real TLS handshake works (certifi bundle resolvable and
     # valid). Under Nuitka standalone, certifi's cacert.pem is bundled next
     # to the compiled module, but if the bundle path resolves wrong every
     # provider call fails with an opaque APIConnectionError. Doing a live
     # handshake here catches that class of bug before the tarball is
-    # published. Uses only stdlib ssl/socket.
-    import socket  # noqa: PLC0415
+    # Uses only stdlib ssl/socket.
     import ssl  # noqa: PLC0415
 
-    _host = os.environ.get("HERMES_SMOKE_TLS_HOST", "inference-api.nousresearch.com")
     try:
         import certifi  # noqa: PLC0415
 
