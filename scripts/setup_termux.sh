@@ -40,7 +40,7 @@ done
 if [[ "$SKIP_PACKAGES" != true ]]; then
     command -v pkg >/dev/null 2>&1 || die 'Termux pkg command is unavailable'
     info 'Installing Termux runtime and build dependencies'
-    pkg install -y python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api patchelf binutils
+    pkg install -y python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api patchelf binutils ldd
 fi
 
 if [[ "$USE_TCR" == true ]]; then
