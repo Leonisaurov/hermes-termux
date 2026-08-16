@@ -40,7 +40,7 @@ done
 if [[ "$SKIP_PACKAGES" != true ]]; then
     command -v pkg >/dev/null 2>&1 || die 'Termux pkg command is unavailable'
     info 'Installing Termux runtime and build dependencies'
-    pkg install -y python git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api
+    pkg install -y python python-cryptography git clang rust make pkg-config libffi openssl ca-certificates curl ripgrep ffmpeg termux-api
 fi
 
 if [[ "$USE_TCR" == true ]]; then
@@ -85,6 +85,10 @@ use_termux_native_cryptography() {
     # uses --system-site-packages, remove only the venv copy and let Python
     # resolve the ABI-matched Termux package instead.
     local site_packages="$REPO_ROOT/venv/lib/python$("$VENV_PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')/site-packages"
+    local system_python="$PREFIX/bin/python"
+    [[ -x "$system_python" ]] || system_python="$PYTHON"
+    "$system_python" -c 'import cryptography' >/dev/null 2>&1 \
+        || die 'Termux python-cryptography is unavailable; install it with pkg install python-cryptography and rerun setup'
     if [[ -d "$site_packages/cryptography" ]]; then
         rm -rf "$site_packages/cryptography" "$site_packages"/cryptography-*.dist-info
     fi
