@@ -176,18 +176,17 @@ if [[ "$BUILD_STANDALONE" == true ]]; then
     STANDALONE_DIR="$STANDALONE_PARENT/hermes-termux.dist"
     mkdir -p "$STANDALONE_PARENT"
     info "Building standalone Hermes with Nuitka (output: $STANDALONE_DIR)"
-    # --strip: drops debug/symbol tables from the ELF (~287MB → ~200MB on
-    #   aarch64), the single biggest size win for the on-device tarball.
     # --lto=yes: link-time optimization — smaller, faster binary; Nuitka
     #   falls back gracefully on toolchains without LTO.
     # --remove-output: deletes the intermediate .build/ tree after success,
     #   halving the dist/ footprint on the phone.
+    # NOTE: no --strip. Nuitka 4.x's CLI rejects it ("no such option:
+    # --strip"); stripping is on by default in standalone builds.
     "${RUNNER[@]}" "$VENV_PYTHON" -m nuitka \
         --standalone \
         --follow-imports \
         --jobs="$BUILD_JOBS" \
         --low-memory \
-        --strip \
         --lto=yes \
         --remove-output \
         --cache-dir="${NUITKA_CACHE_DIR:-$HOME/.cache/Nuitka}" \
