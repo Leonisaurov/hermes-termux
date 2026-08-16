@@ -52,16 +52,51 @@ jobs:
         # inside the checkout by the container, so hand it over first.
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
+      - name: Restore Nuitka + pip build cache
+        # Nuitka keeps a per-module compile cache (~/.cache/Nuitka) and pip
+        # keeps built wheels (~/.cache/pip). Persisting both across runs
+        # turns a ~40 min cold compile into a ~5 min incremental one when
+        # only a few .py files changed (Nuitka recompiles only stale
+        # modules; its cache self-invalidates when the Nuitka/compiler
+        # version changes). Keyed on the dependency/setup manifests — a
+        # pure source change keeps the same key and hits restore-keys.
+        id: cache-restore
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/hermes-termux-cache
+          key: hermes-termux-cache-${{ hashFiles('uv.lock', 'pyproject.toml', 'scripts/setup_termux.sh', 'scripts/build-termux-standalone-ci.sh') }}
+          restore-keys: |
+            hermes-termux-cache-
+
+      - name: Prepare cache dir for container
+        run: |
+          mkdir -p "${{ runner.temp }}/hermes-termux-cache"/pip
+          mkdir -p "${{ runner.temp }}/hermes-termux-cache"/nuitka
+          sudo chown -R 1000:1000 "${{ runner.temp }}/hermes-termux-cache"
+
       - name: Build inside Termux container (arm64)
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
+            -v "${{ runner.temp }}/hermes-termux-cache/pip:/data/data/com.termux/files/home/.cache/pip" \
+            -v "${{ runner.temp }}/hermes-termux-cache/nuitka:/data/data/com.termux/files/home/.cache/Nuitka" \
             termux/termux-docker:latest \
             bash /workspace/scripts/build-termux-standalone-ci.sh
 
       - name: Restore checkout ownership
         run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
+      - name: Save Nuitka + pip build cache
+        # Always save (even on failure): a partially-populated Nuitka cache
+        # still makes the next run faster, and pip wheels are pure win.
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/hermes-termux-cache
+          # Suffix with run_id so every run writes a fresh entry; the next
+          # run's restore-keys (prefix match) picks up the newest.
+          key: hermes-termux-cache-${{ hashFiles('uv.lock', 'pyproject.toml', 'scripts/setup_termux.sh', 'scripts/build-termux-standalone-ci.sh') }}-${{ github.run_id }}
 
       - name: Upload standalone artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
