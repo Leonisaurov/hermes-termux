@@ -77,6 +77,22 @@ else
     echo 'warning: smoke test failed (--version); see output above' >&2
 fi
 
+# Critical Nuitka regression check: the OpenAI client import path. Under
+# Nuitka standalone, openai._base_client is compiled into the binary and its
+# loader is an immutable nuitka_module_loader; the CLI's httpx-__del__-neuter
+# finder used to mutate spec.loader.exec_module, which crashes at first
+# AsyncOpenAI construction with "cannot set 'exec_module' attribute of
+# immutable type 'nuitka_module_loader'". HERMES_SMOKE_OPENAI_IMPORT forces
+# that exact import; the fixed loader-proxy path must succeed. Fatal here —
+# publishing a binary that dies on first model chat is worse than a failed
+# build.
+if HERMES_SMOKE_OPENAI_IMPORT=1 "$BIN" 2>&1 | grep -q "openai._base_client import OK"; then
+    info 'Smoke test passed: OpenAI client import path works under Nuitka'
+else
+    echo 'error: OpenAI client import path is broken under Nuitka (loader proxy?)' >&2
+    exit 1
+fi
+
 ARCH="$(uname -m)"
 OUT="$REPO_ROOT/dist/hermes-termux-${ARCH}.tar.gz"
 info "Packaging $OUT"

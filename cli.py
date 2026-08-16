@@ -878,12 +878,46 @@ try:
                 except Exception:
                     pass
 
-            spec.loader.exec_module = _patched_exec  # type: ignore[method-assign]
+            # Wrap the loader instead of mutating it.  `spec.loader.exec_module
+            # = ...` (the pre-Nuitka approach) fails under Nuitka standalone
+            # builds: modules compiled into the binary use an immutable
+            # `nuitka_module_loader` type and assigning any attribute raises
+            # `cannot set 'exec_module' attribute of immutable type
+            # 'nuitka_module_loader'` at the moment the OpenAI client is first
+            # constructed.  A proxy that delegates everything and overrides
+            # only exec_module works with both stdlib SourceFileLoader and the
+            # Nuitka loader (create_module/get_code/etc. are forwarded via
+            # __getattr__, so module_from_spec + exec_module keep working).
+            class _LoaderProxy:
+                def __init__(self, loader, exec_hook):
+                    self.__dict__["_loader"] = loader
+                    self.__dict__["_exec_hook"] = exec_hook
+
+                def exec_module(self, module):
+                    self._exec_hook(module)
+
+                def __getattr__(self, name):
+                    return getattr(self._loader, name)
+
+            spec.loader = _LoaderProxy(spec.loader, _patched_exec)
             return spec
 
     _httpx_neuter_sys.meta_path.insert(0, _AsyncHttpxDelNeuter())
 except Exception:
     pass
+
+# CI smoke-test hook: force the exact import path the OpenAI client takes
+# (openai._base_client → the finder above → the loader proxy). Under Nuitka
+# standalone, a broken finder crashes here with "cannot set 'exec_module'
+# attribute of immutable type 'nuitka_module_loader'"; the build helper
+# (scripts/build-termux-standalone-ci.sh) runs this to catch that class of
+# bug before the tarball is published.
+if os.environ.get("HERMES_SMOKE_OPENAI_IMPORT") == "1":
+    import importlib  # noqa: PLC0415
+
+    importlib.import_module("openai._base_client")
+    print("smoke: openai._base_client import OK (loader proxy works)")
+    raise SystemExit(0)
 
 from rich import box as rich_box
 from rich.console import Console
