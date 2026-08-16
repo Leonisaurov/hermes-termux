@@ -975,11 +975,14 @@ if os.environ.get("HERMES_SMOKE_OPENAI_IMPORT") == "1":
         _tdf._ORIG_GETADDRINFO = _broken_resolver
         try:
             _fb = socket.getaddrinfo(_host, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            _ip = _fb[0][4][0]
-            _is_ip = _ip.replace(".", "").isdigit()
-            print(f"smoke: dns fallback resolves {_host} -> {_ip} (ip={_is_ip})")
-            if not _is_ip:
-                raise SystemExit("dns fallback did not return a literal IP")
+            _ips = [x[4][0] for x in _fb]
+            _all_ips = all(i.replace(".", "").isdigit() or ":" in i for i in _ips)
+            # Must include at least one IPv4 (httpx prefers it) and the
+            # family filtering must not blow up on AF_UNSPEC.
+            _has_v4 = any("." in i and i.replace(".", "").isdigit() for i in _ips)
+            print(f"smoke: dns fallback resolves {_host} -> {_ips[:4]} (ips={_all_ips}, v4={_has_v4})")
+            if not (_all_ips and _has_v4):
+                raise SystemExit("dns fallback did not return usable IPs (v4+v6)")
         finally:
             _tdf._ORIG_GETADDRINFO = _saved
     except SystemExit:

@@ -138,8 +138,8 @@ else
 fi
 
 if HERMES_SMOKE_OPENAI_IMPORT=1 HERMES_SMOKE_TLS_HOST="${HERMES_SMOKE_TLS_HOST:-inference-api.nousresearch.com}" \
-    "$BIN" 2>&1 | grep -qE "dns fallback resolves .* \(ip=True\)"; then
-    info 'Smoke test passed: Termux DNS fallback resolves to a literal IP'
+    "$BIN" 2>&1 | grep -qE "dns fallback resolves .* \(ips=True, v4=True\)"; then
+    info 'Smoke test passed: Termux DNS fallback resolves IPv4+IPv6 to literal IPs'
 else
     echo 'error: Termux DNS fallback is broken inside the standalone binary' >&2
     exit 1
