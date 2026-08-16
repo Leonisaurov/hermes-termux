@@ -80,10 +80,13 @@ jobs:
           [ "$size_mb" -gt 16384 ] && size_mb=16384
           if [ "$size_mb" -gt 1024 ]; then
             echo "creating ${size_mb}MB swap file"
-            sudo fallocate -l "${size_mb}M" /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count="$size_mb" status=none
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile >/dev/null
-            sudo swapon /swapfile && echo "swap file enabled (${size_mb}MB)"
+            # Use a distinct path: the runner's default ~3G swap already
+            # occupies /swapfile (active), so overwriting it fails with
+            # "Text file busy". Add ours as a second swap on top.
+            sudo fallocate -l "${size_mb}M" /buildswap 2>/dev/null || sudo dd if=/dev/zero of=/buildswap bs=1M count="$size_mb" status=none
+            sudo chmod 600 /buildswap
+            sudo mkswap /buildswap >/dev/null
+            sudo swapon /buildswap && echo "swap file enabled (${size_mb}MB)"
           else
             echo "insufficient disk for a useful swap file (${size_mb}MB available); skipping"
           fi
