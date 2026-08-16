@@ -121,7 +121,10 @@ if [[ "$SKIP_PYTHON" != true ]]; then
         "${PSUTIL_INSTALLER[@]}" --pip "$PSUTIL_PIP"
     fi
     info 'Installing Hermes with the curated Termux dependency profile'
-    "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
+    # Do not upgrade the pip package itself: Termux owns the system pip and
+    # explicitly forbids replacing it. The venv can still use that pip to
+    # install project dependencies into its writable site-packages.
+    "${RUNNER[@]}" "$VENV_PYTHON" -m pip install --upgrade setuptools wheel
     "${RUNNER[@]}" "$VENV_PYTHON" -m pip install -e '.[termux]' -c "$REPO_ROOT/constraints-termux.txt"
     use_termux_native_cryptography
 fi
