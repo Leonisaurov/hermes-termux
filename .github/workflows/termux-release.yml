@@ -176,4 +176,8 @@ jobs:
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Hermes Termux CI build {0}', github.run_id) }}
           files: release-assets/hermes-termux-*.tar.xz
           generate_release_notes: startsWith(github.ref, 'refs/tags/v')
+          # Tag pushes (v*) are stable releases and become "latest"; manual
+          # workflow_dispatch builds are prereleases so they never shadow the
+          # latest stable release (install.sh installs releases/latest).
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           fail_on_unmatched_files: true
