@@ -34,6 +34,7 @@ INSTALL_DIR="${HERMES_TERMUX_INSTALL_DIR:-$HERMES_HOME/hermes-termux}"
 TAG=""
 SKIP_DEPS=false
 NO_VERIFY=false
+NO_LINK=false
 
 # Runtime packages the standalone binary shells out to (not build deps; the
 # binary bundles its own Python + native extensions).
@@ -65,6 +66,7 @@ Options:
                    (default: \$HOME/.hermes/hermes-termux)
   --skip-deps      Do not install runtime packages via pkg
   --no-verify      Skip the post-install 'hermes --version' check
+  --no-link        Do not create the 'hermes' symlink in \$PREFIX/bin
   -h, --help       Show this help
 
 Environment:
@@ -94,6 +96,10 @@ while [ $# -gt 0 ]; do
             ;;
         --no-verify)
             NO_VERIFY=true
+            shift
+            ;;
+        --no-link)
+            NO_LINK=true
             shift
             ;;
         -h|--help)
@@ -206,15 +212,21 @@ rm -rf "$INSTALL_DIR.old"
 printf '%s\n' "${TAG:-latest}" > "$INSTALL_DIR/.version"
 
 # --- launcher --------------------------------------------------------------
-mkdir -p "$PREFIX/bin"
-LAUNCHER="$PREFIX/bin/hermes"
 TARGET="$INSTALL_DIR/hermes-termux.dist/hermes-termux"
-ln -sf "$TARGET" "$LAUNCHER"
-ok "linked $LAUNCHER -> $TARGET"
+if [ "$NO_LINK" = false ]; then
+    mkdir -p "$PREFIX/bin"
+    LAUNCHER="$PREFIX/bin/hermes"
+    ln -sf "$TARGET" "$LAUNCHER"
+    ok "linked $LAUNCHER -> $TARGET"
+else
+    LAUNCHER="$TARGET"
+fi
 
 if [ "$NO_VERIFY" = false ]; then
-    if command -v hermes >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
+    if [ "$NO_LINK" = false ] && command -v hermes >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
         ok "'hermes --version' works from PATH"
+    elif [ "$NO_LINK" = true ]; then
+        ok "skipped PATH check (--no-link); run: $LAUNCHER"
     else
         warn "'hermes' not on PATH in this shell yet — open a new shell or run: $LAUNCHER"
     fi
@@ -224,8 +236,14 @@ fi
 echo ""
 printf '%sHermes Agent installed.%s\n' "$C_BOLD" "$C_NC"
 echo "  binary   : $TARGET"
-echo "  launcher : $LAUNCHER  (on PATH)"
+if [ "$NO_LINK" = false ]; then
+    echo "  launcher : $LAUNCHER  (on PATH)"
+fi
 echo "  version  : ${TAG:-latest} release"
 echo ""
-echo "  Run:    hermes"
+if [ "$NO_LINK" = false ]; then
+    echo "  Run:    hermes"
+else
+    echo "  Run:    $TARGET"
+fi
 echo "  Update: re-run this installer (curl ... | sh)"
